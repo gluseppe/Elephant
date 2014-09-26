@@ -2,27 +2,69 @@ package com.elephant.proga.elephant;
 
 import android.support.v4.app.FragmentActivity;
 import android.os.Bundle;
+import android.util.Log;
 
+import com.google.android.gms.maps.CameraUpdate;
+import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 public class NavigationMapActivity extends FragmentActivity {
 
     private GoogleMap mMap; // Might be null if Google Play services APK is not available.
+    private Thread selfPositionThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        this.selfPositionThread = null;
         setContentView(R.layout.activity_navigation_map);
         setUpMapIfNeeded();
+        receivePosition();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         setUpMapIfNeeded();
+    }
+
+    public void selfUpdated(String s) {
+
+        Log.d("NAVIGATION_MAP_ACTIVITY",String.format("%s threadname:%s",s,Thread.currentThread().getName()));
+        JSONObject jobj;
+        double lat = 0, lon = 0, h = 0;
+        try {
+            jobj = new JSONObject(s);
+            lat = jobj.getDouble("lat");
+            lon = jobj.getDouble("lon");
+            h = jobj.getDouble("h");
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+
+
+        Log.d("NAVIGATION_MAP_ACTIVITY",String.format("lat:%f lon:%f h:%f",lat,lon,h));
+
+
+        this.mMap.addMarker(new MarkerOptions()
+                .position(new LatLng(lat, lon))
+                .title("SELF"));
+
+        CameraUpdate camUpdate = CameraUpdateFactory.newLatLng(new LatLng(lat,lon));
+        this.mMap.moveCamera(camUpdate);
+
+
+
+
+
+
+
     }
 
     /**
@@ -51,6 +93,12 @@ public class NavigationMapActivity extends FragmentActivity {
                 setUpMap();
             }
         }
+    }
+
+
+    private void receivePosition() {
+        this.selfPositionThread = new Thread(new Receiver(this));
+        this.selfPositionThread.start();
     }
 
     /**
