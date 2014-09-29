@@ -49,7 +49,7 @@ public class Receiver implements Runnable {
             //ask traffic
             Log.d("RECEIVER",String.format("ASKING FOR DATA ON A WORKER THREAD %s",Thread.currentThread().getName()));
             client = new DefaultHttpClient();
-            req = new HttpGet("http://192.168.1.31:8080/traffic?item=myState");
+            req = new HttpGet("http://192.168.1.10:8080/traffic?item=myState");
 
 
             try {
