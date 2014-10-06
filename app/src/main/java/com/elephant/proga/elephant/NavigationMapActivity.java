@@ -9,7 +9,6 @@ import android.util.Log;
 import android.view.animation.Interpolator;
 import android.view.animation.LinearInterpolator;
 
-import com.google.android.gms.maps.CameraUpdate;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.Projection;
@@ -23,129 +22,40 @@ import com.google.android.gms.maps.model.MarkerOptions;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-public class NavigationMapActivity extends FragmentActivity {
+import java.util.Hashtable;
+import java.util.Iterator;
+
+public class NavigationMapActivity extends FragmentActivity implements GoogleMap.OnCameraChangeListener, GoogleMap.OnMarkerClickListener {
+
 
     private GoogleMap mMap; // Might be null if Google Play services APK is not available.
     private Thread selfPositionThread;
+    private Thread trafficPositionThread;
+    private Thread predictioThread;
     private Marker me;
+    private final String ROOTSOURCE = "http://192.168.2.33:8080";
+    private final String SELFSOURCE = ROOTSOURCE + "/traffic?item=myState";
+    private final String TRAFFICSOURCE = ROOTSOURCE + "/traffic?item=traffic";
+    private final String PREDICTIONSOURCE = ROOTSOURCE + "/prediction";
+    private static final long SELFSLEEPINGTIME = 1000;
+    private static final long TRAFFICSLEEPINGTIME = 1000;
+    private Hashtable traffic;
+    private float autoZoomLevel = 12;
+    private float userZoomLevel = -1;
+    private float currentZoomLevel = autoZoomLevel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         this.me = null;
-        this.selfPositionThread = null;
+        this.trafficPositionThread = null;
+        this.predictioThread = null;
+        this.traffic = new Hashtable();
+
         setContentView(R.layout.activity_navigation_map);
         setUpMapIfNeeded();
         receivePosition();
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        setUpMapIfNeeded();
-    }
-
-
-    public void animateMarker(final Marker marker, final LatLng toPosition,
-                              final boolean hideMarker) {
-        final Handler handler = new Handler();
-        final long start = SystemClock.uptimeMillis();
-        Projection proj = this.mMap.getProjection();
-        Point startPoint = proj.toScreenLocation(marker.getPosition());
-        final LatLng startLatLng = proj.fromScreenLocation(startPoint);
-        final long duration = 1000;
-
-        final Interpolator interpolator = new LinearInterpolator();
-
-        handler.post(new Runnable() {
-            @Override
-            public void run() {
-                long elapsed = SystemClock.uptimeMillis() - start;
-                float t = interpolator.getInterpolation((float) elapsed
-                        / duration);
-                double lng = t * toPosition.longitude + (1 - t)
-                        * startLatLng.longitude;
-                double lat = t * toPosition.latitude + (1 - t)
-                        * startLatLng.latitude;
-                marker.setPosition(new LatLng(lat, lng));
-
-                if (t < 1.0) {
-                    // Post again 16ms later.
-                    handler.postDelayed(this, 16);
-                } else {
-                    if (hideMarker) {
-                        marker.setVisible(false);
-                    } else {
-                        marker.setVisible(true);
-                    }
-                }
-            }
-        });
-    }
-
-    public void selfUpdated(String s) {
-
-        Log.d("NAVIGATION_MAP_ACTIVITY",String.format("%s threadname:%s",s,Thread.currentThread().getName()));
-        JSONObject jobj;
-        double lat = 0, lon = 0, h = 0, vx = 0, vy = 0;
-
-        try {
-            jobj = new JSONObject(s);
-            lat = jobj.getDouble("lat");
-            lon = jobj.getDouble("lon");
-            vx = jobj.getDouble("vx");
-            vy = jobj.getDouble("vy");
-            h = jobj.getDouble("h");
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-
-
-        Log.d("NAVIGATION_MAP_ACTIVITY",String.format("lat:%f lon:%f h:%f",lat,lon,h));
-
-
-        double bx = 1.0;
-        double by = 0;
-
-        double num = vx*bx + vy*by;
-        double nv = Math.sqrt(Math.pow(vx,2)+Math.pow(vy,2));
-        double nb = Math.sqrt(Math.pow(bx,2)+Math.pow(by,2));
-        double den = nv*nb;
-
-        double alfa = Math.acos(num/den);
-
-        if(this.me == null) {
-            this.me = this.mMap.addMarker(new MarkerOptions()
-                    .position(new LatLng(lat, lon))
-                    .icon(BitmapDescriptorFactory.fromResource(R.drawable.self_black_40))
-                    .flat(true)
-                    .rotation((float) alfa)
-                    .title("SELF"));
-        }
-        else
-        {
-            animateMarker(this.me,new LatLng(lat,lon),false);
-        }
-
-        CameraPosition cameraPosition = new CameraPosition.Builder()
-                .target(new LatLng(lat,lon))      // Sets the center of the map to the new position
-                .zoom(15)                   // Sets the zoom
-//                .bearing(90)                // Sets the orientation of the camera to east
-                .tilt(30)                   // Sets the tilt of the camera to 30 degrees
-                .build();                   // Creates a CameraPosition from the builder
-        this.mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition),1000,null);
-
-
-
-        //CameraUpdate camUpdate = CameraUpdateFactory.newLatLng(new LatLng(lat,lon));
-
-        //this.mMap.animateCamera(camUpdate, 500, null);
-
-
-
-
-
-
+        receiveTraffic();
 
     }
 
@@ -170,6 +80,8 @@ public class NavigationMapActivity extends FragmentActivity {
             // Try to obtain the map from the SupportMapFragment.
             mMap = ((SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map))
                     .getMap();
+            mMap.setOnCameraChangeListener(this);
+            mMap.setOnMarkerClickListener(this);
             // Check if we were successful in obtaining the map.
             if (mMap != null) {
                 setUpMap();
@@ -178,9 +90,24 @@ public class NavigationMapActivity extends FragmentActivity {
     }
 
 
-    private void receivePosition() {
-        this.selfPositionThread = new Thread(new Receiver(this));
-        this.selfPositionThread.start();
+    @Override
+    protected void onResume() {
+        super.onResume();
+        setUpMapIfNeeded();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        this.selfPositionThread.interrupt();
+        this.selfPositionThread = null;
+    }
+
+    @Override
+    protected void onRestart() {
+        super.onRestart();
+        setUpMapIfNeeded();
+        receivePosition();
     }
 
     /**
@@ -191,5 +118,204 @@ public class NavigationMapActivity extends FragmentActivity {
      */
     private void setUpMap() {
         //mMap.addMarker(new MarkerOptions().position(new LatLng(0, 0)).title("Marker"));
+    }
+
+
+    public void animateMarker(final Marker marker, final LatLng toPosition, final float rotAngle,
+                              final boolean hideMarker) {
+        final Handler handler = new Handler();
+        final long start = SystemClock.uptimeMillis();
+        Projection proj = this.mMap.getProjection();
+        Point startPoint = proj.toScreenLocation(marker.getPosition());
+        final float startAngle = marker.getRotation();
+        final LatLng startLatLng = proj.fromScreenLocation(startPoint);
+        final long duration = 1000;
+
+        final Interpolator interpolator = new LinearInterpolator();
+
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                long elapsed = SystemClock.uptimeMillis() - start;
+                float t = interpolator.getInterpolation((float) elapsed
+                        / duration);
+                double lng = t * toPosition.longitude + (1 - t)
+                        * startLatLng.longitude;
+                double lat = t * toPosition.latitude + (1 - t)
+                        * startLatLng.latitude;
+                float intermediate_angle = t * rotAngle + (1 -t) * startAngle;
+
+                 marker.setPosition(new LatLng(lat, lng));
+                marker.setRotation(intermediate_angle);
+
+
+                if (t < 1.0) {
+                    // Post again 16ms later.
+                    handler.postDelayed(this, 16);
+                } else {
+                    if (hideMarker) {
+                        marker.setVisible(false);
+                    } else {
+                        marker.setVisible(true);
+                    }
+                }
+            }
+        });
+    }
+
+    public void onTrafficUpdate(JSONObject jTraffic) {
+        if (jTraffic == null)
+        {
+            Log.d("TRAFFIC UPDATE",String.format("JSONObject was null"));
+            return;
+        }
+        else
+        {
+            Iterator<String> iter = jTraffic.keys();
+            Marker current = null;
+            while (iter.hasNext()) {
+                String key = iter.next();
+                Log.d("TRAFFIC UPDATE", String.format("flight id:%s",key));
+                try {
+                    JSONObject status = (JSONObject) jTraffic.get(key);
+                    double lat = status.getDouble("lat");
+                    double lon = status.getDouble("lon");
+                    double h = status.getDouble("h");
+
+                    double vx = status.getDouble("vx");
+                    double vy = status.getDouble("vy");
+
+                    current = (Marker) this.traffic.get(key);
+
+
+                    if (current == null) {
+                        Log.d("TRAFFIC UPDATE", String.format("flight id:%s was not in our hashtable",key));
+                        current = this.mMap.addMarker(new MarkerOptions()
+                                .position(new LatLng(lat, lon))
+                                .icon(BitmapDescriptorFactory.fromResource(R.drawable.traffic_red_40))
+                                .flat(true)
+                                .title(key));
+                        Log.d("TRAFFIC UPDATE", String.format("Adding %s, currently we have %d elements",key,this.traffic.size()));
+                        this.traffic.put(key,current);
+                        Log.d("TRAFFIC UPDATE", String.format("We now have %d elements in the hasthable",this.traffic.size()));
+
+                    }
+
+
+                    float angle = getRotAngle(vx,vy);
+
+                    this.animateMarker(current, new LatLng(lat,lon),getRotAngle(vx,vy),false);
+
+                } catch (JSONException e) {
+                    // Something went wrong!
+                    Log.e("JSONERROR", "SOMETHING WRONG WITH JSON");
+                }
+            }
+        }
+
+
+    }
+
+    public void onPredictionReceived(JSONObject jPrediction) {
+        Log.d("PREDICTION", "Hey, prediction received maybe");
+
+    }
+
+    private float getRotAngle(double vx, double vy) {
+
+
+        double bx = 0.0;
+        double by = 1.0;
+
+        if (vx == 0.0 && vy == 0.0)
+            return 0.0f;
+
+
+
+        float rotAngle = (float) Math.acos(vy/(Math.sqrt(Math.pow(vx,2)+Math.pow(vy,2)))) * (float) (vx/Math.abs(vx));
+        return rotAngle * (180/(float)Math.PI);
+
+    }
+
+    public void onSelfUpdate(JSONObject jSelf) {
+        double lat = 0, lon = 0, h = 0, vx = 0, vy = 0;
+
+        if (jSelf == null) return;
+
+        try {
+            lat = jSelf.getDouble("lat");
+            lon = jSelf.getDouble("lon");
+            vx = jSelf.getDouble("vx");
+            vy = jSelf.getDouble("vy");
+            h = jSelf.getDouble("h");
+
+            /*double bx = 0.0;
+            double by = 1.0;
+
+            float rotAngle;
+            rotAngle = (float) Math.acos(vy/(Math.sqrt(Math.pow(vx,2)+Math.pow(vy,2)))) * (float) (vx/Math.abs(vx));
+            rotAngle = rotAngle * (180/(float)Math.PI);
+            */
+
+            float rotAngle = getRotAngle(vx,vy);
+            Log.d("ANGLE",String.format("Vx:%f, Vx:%f Alfa is:%f",vx,vy,rotAngle));
+
+            if(this.me == null) {
+                this.me = this.mMap.addMarker(new MarkerOptions()
+                        .position(new LatLng(lat, lon))
+                        .icon(BitmapDescriptorFactory.fromResource(R.drawable.self_black_40))
+                        .flat(true)
+                        .title("SELF"));
+            }
+            else
+            {
+                animateMarker(this.me,new LatLng(lat,lon),rotAngle,false);
+            }
+
+            CameraPosition cameraPosition = new CameraPosition.Builder()
+                    .target(new LatLng(lat,lon))      // Sets the center of the map to the new position
+                    .zoom(this.currentZoomLevel)                   // Sets the zoom
+//                .bearing(90)                // Sets the orientation of the camera to east
+                    .tilt(30)                   // Sets the tilt of the camera to 30 degrees
+                    .build();                   // Creates a CameraPosition from the builder
+            this.mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition),1000,null);
+
+
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+            //da capire perchè potrebbe generare un'eccezione
+            //e decidere se chiudere tutto o lasciar perdere
+        }
+
+    }
+
+
+    private void receivePosition() {
+        this.selfPositionThread = new Thread(new SelfStatusReceiver(this, this.SELFSOURCE,this.SELFSLEEPINGTIME));
+        this.selfPositionThread.start();
+    }
+
+    private void receiveTraffic() {
+        this.trafficPositionThread = new Thread(new TrafficReceiver(this, this.TRAFFICSOURCE, this.TRAFFICSLEEPINGTIME));
+        this.trafficPositionThread.start();
+    }
+
+
+    @Override
+    public void onCameraChange(CameraPosition cameraPosition) {
+        this.currentZoomLevel = cameraPosition.zoom;
+
+    }
+
+    @Override
+    public boolean onMarkerClick(Marker marker) {
+        marker.showInfoWindow();
+        Log.d("MARKER",String.format("MARKER TOUCHED, HELLO I M %s",marker.getTitle()));
+        PredictionReceiver pr = new PredictionReceiver(this,this.PREDICTIONSOURCE);
+        pr.setFlight(marker.getTitle());
+        this.predictioThread = new Thread(pr);
+        this.predictioThread.start();
+        return true;
     }
 }
