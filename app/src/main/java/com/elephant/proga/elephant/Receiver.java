@@ -35,7 +35,7 @@ public class Receiver implements Runnable {
 
     private String responseContentToString(InputStream inputStream) throws IOException {
         BufferedReader bufferedReader = new BufferedReader( new InputStreamReader(inputStream));
-        String line = "";
+        String line;
         String result = "";
         while((line = bufferedReader.readLine()) != null)
             result += line;
@@ -67,8 +67,7 @@ public class Receiver implements Runnable {
     protected JSONObject toJSON(String string) {
 
         try {
-            JSONObject jObj = new JSONObject(string);
-            return jObj;
+            return new JSONObject(string);
 
         } catch (JSONException e) {
             e.printStackTrace();
@@ -81,7 +80,7 @@ public class Receiver implements Runnable {
     public void run() {
 
 
-        while(true && !Thread.interrupted()) {
+        while(!Thread.interrupted()) {
 
 
             this.content = this.GET();

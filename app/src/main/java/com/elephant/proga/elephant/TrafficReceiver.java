@@ -17,7 +17,7 @@ public class TrafficReceiver extends Receiver {
     public void run() {
 
 
-        while(true && !Thread.interrupted()) {
+        while(!Thread.interrupted()) {
 
 
             this.content = this.GET();

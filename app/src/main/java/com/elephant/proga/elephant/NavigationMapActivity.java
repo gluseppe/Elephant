@@ -15,6 +15,7 @@ import com.google.android.gms.maps.Projection;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.CameraPosition;
+import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
@@ -22,8 +23,11 @@ import com.google.android.gms.maps.model.MarkerOptions;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.Hashtable;
 import java.util.Iterator;
+
+import static android.graphics.Color.RED;
 
 public class NavigationMapActivity extends FragmentActivity implements GoogleMap.OnCameraChangeListener, GoogleMap.OnMarkerClickListener {
 
@@ -33,13 +37,13 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
     private Thread trafficPositionThread;
     private Thread predictioThread;
     private Marker me;
-    private final String ROOTSOURCE = "http://192.168.2.33:8080";
+    private final String ROOTSOURCE = "http://192.168.2.6:8080";
     private final String SELFSOURCE = ROOTSOURCE + "/traffic?item=myState";
     private final String TRAFFICSOURCE = ROOTSOURCE + "/traffic?item=traffic";
     private final String PREDICTIONSOURCE = ROOTSOURCE + "/prediction";
-    private static final long SELFSLEEPINGTIME = 1000;
-    private static final long TRAFFICSLEEPINGTIME = 1000;
-    private Hashtable traffic;
+    private static final long SELFSLEEPINGTIME = 2000;
+    private static final long TRAFFICSLEEPINGTIME = 2000;
+    private Hashtable<String, Marker> traffic;
     private float autoZoomLevel = 12;
     private float userZoomLevel = -1;
     private float currentZoomLevel = autoZoomLevel;
@@ -122,14 +126,13 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
 
 
     public void animateMarker(final Marker marker, final LatLng toPosition, final float rotAngle,
-                              final boolean hideMarker) {
+                              final boolean hideMarker, final long duration) {
         final Handler handler = new Handler();
         final long start = SystemClock.uptimeMillis();
         Projection proj = this.mMap.getProjection();
         Point startPoint = proj.toScreenLocation(marker.getPosition());
         final float startAngle = marker.getRotation();
         final LatLng startLatLng = proj.fromScreenLocation(startPoint);
-        final long duration = 1000;
 
         final Interpolator interpolator = new LinearInterpolator();
 
@@ -167,12 +170,11 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
         if (jTraffic == null)
         {
             Log.d("TRAFFIC UPDATE",String.format("JSONObject was null"));
-            return;
         }
         else
         {
             Iterator<String> iter = jTraffic.keys();
-            Marker current = null;
+            Marker current;
             while (iter.hasNext()) {
                 String key = iter.next();
                 Log.d("TRAFFIC UPDATE", String.format("flight id:%s",key));
@@ -180,12 +182,12 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
                     JSONObject status = (JSONObject) jTraffic.get(key);
                     double lat = status.getDouble("lat");
                     double lon = status.getDouble("lon");
-                    double h = status.getDouble("h");
+                    //double h = status.getDouble("h");
 
                     double vx = status.getDouble("vx");
                     double vy = status.getDouble("vy");
 
-                    current = (Marker) this.traffic.get(key);
+                    current = this.traffic.get(key);
 
 
                     if (current == null) {
@@ -202,9 +204,9 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
                     }
 
 
-                    float angle = getRotAngle(vx,vy);
+                    //float angle = getRotAngle(vx,vy);
 
-                    this.animateMarker(current, new LatLng(lat,lon),getRotAngle(vx,vy),false);
+                    this.animateMarker(current, new LatLng(lat,lon),getRotAngle(vx,vy),false,TRAFFICSLEEPINGTIME);
 
                 } catch (JSONException e) {
                     // Something went wrong!
@@ -219,13 +221,23 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
     public void onPredictionReceived(JSONObject jPrediction) {
         Log.d("PREDICTION", "Hey, prediction received maybe");
 
+
     }
 
+    public void onRawPredictionReceived(ArrayList<LatLng> particles) {
+        Iterator i = particles.iterator();
+        while (i.hasNext()) {
+            mMap.addCircle(new CircleOptions()
+            .center((LatLng) i.next())
+            .radius(50)
+            .strokeColor(RED)
+            );
+        }
+    }
+
+
+
     private float getRotAngle(double vx, double vy) {
-
-
-        double bx = 0.0;
-        double by = 1.0;
 
         if (vx == 0.0 && vy == 0.0)
             return 0.0f;
@@ -238,7 +250,11 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
     }
 
     public void onSelfUpdate(JSONObject jSelf) {
-        double lat = 0, lon = 0, h = 0, vx = 0, vy = 0;
+        double lat;
+        double lon;
+        //double h = 0;
+        double vx;
+        double vy;
 
         if (jSelf == null) return;
 
@@ -247,7 +263,7 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
             lon = jSelf.getDouble("lon");
             vx = jSelf.getDouble("vx");
             vy = jSelf.getDouble("vy");
-            h = jSelf.getDouble("h");
+            //h = jSelf.getDouble("h");
 
             /*double bx = 0.0;
             double by = 1.0;
@@ -257,8 +273,8 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
             rotAngle = rotAngle * (180/(float)Math.PI);
             */
 
-            float rotAngle = getRotAngle(vx,vy);
-            Log.d("ANGLE",String.format("Vx:%f, Vx:%f Alfa is:%f",vx,vy,rotAngle));
+            //float rotAngle = getRotAngle(vx,vy);
+            //Log.d("ANGLE",String.format("Vx:%f, Vx:%f Alfa is:%f",vx,vy,rotAngle));
 
             if(this.me == null) {
                 this.me = this.mMap.addMarker(new MarkerOptions()
@@ -269,16 +285,16 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
             }
             else
             {
-                animateMarker(this.me,new LatLng(lat,lon),rotAngle,false);
+                animateMarker(this.me,new LatLng(lat,lon),getRotAngle(vx,vy),false,SELFSLEEPINGTIME);
             }
 
             CameraPosition cameraPosition = new CameraPosition.Builder()
                     .target(new LatLng(lat,lon))      // Sets the center of the map to the new position
                     .zoom(this.currentZoomLevel)                   // Sets the zoom
 //                .bearing(90)                // Sets the orientation of the camera to east
-                    .tilt(30)                   // Sets the tilt of the camera to 30 degrees
+                    .tilt(60)                   // Sets the tilt of the camera to 30 degrees
                     .build();                   // Creates a CameraPosition from the builder
-            this.mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition),1000,null);
+            this.mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition),2000,null);
 
 
 
@@ -292,12 +308,12 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
 
 
     private void receivePosition() {
-        this.selfPositionThread = new Thread(new SelfStatusReceiver(this, this.SELFSOURCE,this.SELFSLEEPINGTIME));
+        this.selfPositionThread = new Thread(new SelfStatusReceiver(this, this.SELFSOURCE, SELFSLEEPINGTIME));
         this.selfPositionThread.start();
     }
 
     private void receiveTraffic() {
-        this.trafficPositionThread = new Thread(new TrafficReceiver(this, this.TRAFFICSOURCE, this.TRAFFICSLEEPINGTIME));
+        this.trafficPositionThread = new Thread(new TrafficReceiver(this, this.TRAFFICSOURCE, TRAFFICSLEEPINGTIME));
         this.trafficPositionThread.start();
     }
 
@@ -313,7 +329,7 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
         marker.showInfoWindow();
         Log.d("MARKER",String.format("MARKER TOUCHED, HELLO I M %s",marker.getTitle()));
         PredictionReceiver pr = new PredictionReceiver(this,this.PREDICTIONSOURCE);
-        pr.setFlight(marker.getTitle());
+        pr.setPredictionParams(marker.getTitle(), true);
         this.predictioThread = new Thread(pr);
         this.predictioThread.start();
         return true;
