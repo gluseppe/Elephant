@@ -15,6 +15,7 @@ import com.google.android.gms.maps.Projection;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.CameraPosition;
+import com.google.android.gms.maps.model.Circle;
 import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
@@ -24,6 +25,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.Hashtable;
 import java.util.Iterator;
 
@@ -37,7 +39,9 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
     private Thread trafficPositionThread;
     private Thread predictioThread;
     private Marker me;
-    private final String ROOTSOURCE = "http://192.168.2.6:8080";
+    private Hashtable<Integer,ArrayList<Particle>> particles;
+
+    private final String ROOTSOURCE = "http://192.168.1.16:8080";
     private final String SELFSOURCE = ROOTSOURCE + "/traffic?item=myState";
     private final String TRAFFICSOURCE = ROOTSOURCE + "/traffic?item=traffic";
     private final String PREDICTIONSOURCE = ROOTSOURCE + "/prediction";
@@ -224,15 +228,53 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
 
     }
 
-    public void onRawPredictionReceived(ArrayList<LatLng> particles) {
-        Iterator i = particles.iterator();
-        while (i.hasNext()) {
-            mMap.addCircle(new CircleOptions()
-            .center((LatLng) i.next())
-            .radius(50)
-            .strokeColor(RED)
-            );
+    private void removeOldRawPrediction() {
+        if (this.particles == null) return;
+
+                Enumeration<Integer> i = particles.keys();
+                while (i.hasMoreElements()) {
+                    ArrayList ft = (ArrayList) particles.get(i.nextElement());
+                    Iterator j = ft.iterator();
+
+                    while(j.hasNext()) {
+                        Particle p = (Particle) j.next();
+                        Circle c = (Circle) p.getRepresentation();
+                        c.remove();
+                        c = null;
+                        j.remove();
+                    }
+
+                    //j.remove();
+                }
+    }
+
+
+    public void onRawPredictionReceived(Hashtable<Integer, ArrayList<Particle>> particles) {
+        //delete from map all of the other circles
+        this.removeOldRawPrediction();
+
+
+        this.particles = null;
+        Enumeration<Integer> i = particles.keys();
+
+        while (i.hasMoreElements()) {
+            ArrayList timesparticles = (ArrayList) particles.get(i.nextElement());
+            Iterator j = timesparticles.iterator();
+            while(j.hasNext()) {
+
+                Particle p = (Particle) j.next();
+                Circle circle = mMap.addCircle(new CircleOptions()
+                                .center(p.getPosition())
+                                .radius(50)
+                                .strokeColor(RED)
+                );
+
+                p.setRepresentation(circle);
+                circle = null;
+            }
         }
+
+        this.particles = particles;
     }
 
 
@@ -329,7 +371,7 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
         marker.showInfoWindow();
         Log.d("MARKER",String.format("MARKER TOUCHED, HELLO I M %s",marker.getTitle()));
         PredictionReceiver pr = new PredictionReceiver(this,this.PREDICTIONSOURCE);
-        pr.setPredictionParams(marker.getTitle(), true);
+        pr.setPredictionParams(marker.getTitle(), 5, 10, true);
         this.predictioThread = new Thread(pr);
         this.predictioThread.start();
         return true;

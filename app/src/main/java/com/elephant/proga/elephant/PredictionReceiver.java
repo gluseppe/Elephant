@@ -10,6 +10,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Hashtable;
 import java.util.Iterator;
 
 /**
@@ -22,7 +23,9 @@ public class PredictionReceiver extends Receiver {
     private ArrayList flights;
     private String flight;
     private boolean rawPrediction;
-    private ArrayList<LatLng> particles;
+    private Hashtable<Integer,ArrayList<Particle>> particles;
+    private int dt;
+    private int nsteps;
 
     public PredictionReceiver(Activity activity, String source) {
         super(activity, source, -1);
@@ -38,20 +41,18 @@ public class PredictionReceiver extends Receiver {
     }
 
 
-    public boolean setPredictionParams(String flight, boolean rawPrediction) {
+    public boolean setPredictionParams(String flight, int dt, int nsteps, boolean rawPrediction) {
         this.flight = flight;
         this.rawPrediction = rawPrediction;
-        this.source = this.source + buildRequestString(flight, rawPrediction);
+        this.source = this.source + buildRequestString(flight, dt, nsteps, rawPrediction);
+        this.dt = dt;
+        this.nsteps = nsteps;
         return true;
     }
 
-    private String buildRequestString(String flight, boolean rawPrediction) {
-        int dt = 10;
+    private String buildRequestString(String flight, int dt, int nsteps, boolean rawPrediction) {
         String dt_string = String.valueOf(dt);
-
-        int nsteps = 5;
         String nsteps_string = String.valueOf(nsteps);
-
 
         return "?" + "flight_id="+ flight + "&" + "deltaT=" + dt_string + "&" + "nsteps=" + nsteps_string + "&" + "raw=" + rawPrediction;
     }
@@ -71,17 +72,24 @@ public class PredictionReceiver extends Receiver {
             {
                 JSONObject jpred = this.toJSON(content);
                 Iterator<String> ids = jpred.keys();
-                particles = new ArrayList();
+                particles = new Hashtable<Integer, ArrayList<Particle>>();
                 while(ids.hasNext()) {
                     try {
                         jtimesraw = jpred.getJSONArray(ids.next());
                         for (int i=0; i<jtimesraw.length();i++)
                         {
+                            int futureTime = i*this.dt;
                             jparticles = jtimesraw.getJSONArray(i);
+                            ArrayList<Particle> particlesInFutureTime = new ArrayList<Particle>();
+
                             for (int j=0; j<jparticles.length(); j++) {
-                                LatLng particle = new LatLng(jparticles.getJSONArray(j).getDouble(1), jparticles.getJSONArray(j).getDouble(0));
-                                particles.add(particle);
+                                Particle particle = new Particle(new LatLng(jparticles.getJSONArray(j).getDouble(1), jparticles.getJSONArray(j).getDouble(0)),futureTime);
+                                particlesInFutureTime.add(particle);
+
+                                particles.put(Integer.valueOf(futureTime), particlesInFutureTime);
+
                             }
+                            particlesInFutureTime = null;
                         }
 
                         this.activity.runOnUiThread(new Runnable() {
