@@ -1,5 +1,6 @@
 package com.elephant.proga.elephant;
 
+import android.graphics.Color;
 import android.graphics.Point;
 import android.os.Bundle;
 import android.os.Handler;
@@ -15,11 +16,13 @@ import com.google.android.gms.maps.Projection;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.CameraPosition;
-import com.google.android.gms.maps.model.Circle;
-import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.maps.model.TileOverlay;
+import com.google.android.gms.maps.model.TileOverlayOptions;
+import com.google.maps.android.heatmaps.Gradient;
+import com.google.maps.android.heatmaps.HeatmapTileProvider;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -28,8 +31,7 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.Hashtable;
 import java.util.Iterator;
-
-import static android.graphics.Color.RED;
+import java.util.List;
 
 public class NavigationMapActivity extends FragmentActivity implements GoogleMap.OnCameraChangeListener, GoogleMap.OnMarkerClickListener {
 
@@ -39,9 +41,12 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
     private Thread trafficPositionThread;
     private Thread predictioThread;
     private Marker me;
+    //raw prediction container
     private Hashtable<Integer,ArrayList<Particle>> particles;
+    //normal prediction container
+    private Object cubes;
 
-    private final String ROOTSOURCE = "http://192.168.1.16:8080";
+    private final String ROOTSOURCE = "http://192.168.1.19:8080";
     private final String SELFSOURCE = ROOTSOURCE + "/traffic?item=myState";
     private final String TRAFFICSOURCE = ROOTSOURCE + "/traffic?item=traffic";
     private final String PREDICTIONSOURCE = ROOTSOURCE + "/prediction";
@@ -52,6 +57,13 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
     private float userZoomLevel = -1;
     private float currentZoomLevel = autoZoomLevel;
 
+    private final String RAWPREDICTIONTYPE = "RAW";
+    private final String CUBESPREDICTIONTYPE = "CUBES";
+    private final String USEDPREDICTION = RAWPREDICTIONTYPE;
+    private HeatmapTileProvider heatmapProvider;
+    private TileOverlay heatmapTileOverlay;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -59,6 +71,9 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
         this.trafficPositionThread = null;
         this.predictioThread = null;
         this.traffic = new Hashtable();
+        this.heatmapTileOverlay = null;
+        this.heatmapProvider = null;
+
 
         setContentView(R.layout.activity_navigation_map);
         setUpMapIfNeeded();
@@ -195,15 +210,15 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
 
 
                     if (current == null) {
-                        Log.d("TRAFFIC UPDATE", String.format("flight id:%s was not in our hashtable",key));
+                        //Log.d("TRAFFIC UPDATE", String.format("flight id:%s was not in our hashtable",key));
                         current = this.mMap.addMarker(new MarkerOptions()
                                 .position(new LatLng(lat, lon))
                                 .icon(BitmapDescriptorFactory.fromResource(R.drawable.traffic_red_40))
                                 .flat(true)
                                 .title(key));
-                        Log.d("TRAFFIC UPDATE", String.format("Adding %s, currently we have %d elements",key,this.traffic.size()));
+                        //Log.d("TRAFFIC UPDATE", String.format("Adding %s, currently we have %d elements",key,this.traffic.size()));
                         this.traffic.put(key,current);
-                        Log.d("TRAFFIC UPDATE", String.format("We now have %d elements in the hasthable",this.traffic.size()));
+                        //Log.d("TRAFFIC UPDATE", String.format("We now have %d elements in the hasthable",this.traffic.size()));
 
                     }
 
@@ -222,13 +237,27 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
 
     }
 
-    public void onPredictionReceived(JSONObject jPrediction) {
+    public void onPredictionReceived(Object prediction) {
+
         Log.d("PREDICTION", "Hey, prediction received maybe");
+
+        if (USEDPREDICTION==RAWPREDICTIONTYPE) {
+            this.particles = (Hashtable<Integer, ArrayList<Particle>>) prediction;
+            this.onRawPredictionReceived(particles);
+        }
+        else
+        {
+            Log.d("PREDICTION", "Hey, prediction with cubes received maybe");
+        }
+
+
+
 
 
     }
 
     private void removeOldRawPrediction() {
+        /*
         if (this.particles == null) return;
 
                 Enumeration<Integer> i = particles.keys();
@@ -246,6 +275,13 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
 
                     //j.remove();
                 }
+        */
+//        if (this.heatmapProvider!= null)
+//            this.heatmapProvider.setData(null);
+
+        if (this.heatmapTileOverlay != null)
+            this.heatmapTileOverlay.remove();
+
     }
 
 
@@ -256,6 +292,7 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
 
         this.particles = null;
         Enumeration<Integer> i = particles.keys();
+        ArrayList coords = new ArrayList();
 
         while (i.hasMoreElements()) {
             ArrayList timesparticles = (ArrayList) particles.get(i.nextElement());
@@ -263,19 +300,47 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
             while(j.hasNext()) {
 
                 Particle p = (Particle) j.next();
-                Circle circle = mMap.addCircle(new CircleOptions()
-                                .center(p.getPosition())
-                                .radius(50)
-                                .strokeColor(RED)
-                );
-
-                p.setRepresentation(circle);
-                circle = null;
+                coords.add(p.getPosition());
             }
         }
-
+        addHeatMap(coords);
         this.particles = particles;
     }
+
+    private void addHeatMap(List list) {
+
+        int[] colors = {
+                Color.rgb(102, 225, 0), // green
+                Color.rgb(80, 0, 0),
+                Color.rgb(180, 0, 0),
+                Color.rgb(255, 0, 0)    // red
+        };
+
+        float[] startPoints = {
+                0.6f, 0.8f, 0.9f, 1f
+        };
+
+        Gradient gradient = new Gradient(colors, startPoints);
+
+
+
+
+
+
+        this.heatmapProvider = new HeatmapTileProvider.Builder()
+                .data(list)
+                .radius(40)
+                .gradient(gradient)
+                .build();
+
+        if (this.heatmapTileOverlay != null)
+            this.heatmapTileOverlay.clearTileCache();
+
+        // Add a tile overlay to the map, using the heat map tile provider.
+        this.heatmapTileOverlay = mMap.addTileOverlay(new TileOverlayOptions().tileProvider(heatmapProvider));
+
+    }
+
 
 
 
@@ -371,9 +436,10 @@ public class NavigationMapActivity extends FragmentActivity implements GoogleMap
         marker.showInfoWindow();
         Log.d("MARKER",String.format("MARKER TOUCHED, HELLO I M %s",marker.getTitle()));
         PredictionReceiver pr = new PredictionReceiver(this,this.PREDICTIONSOURCE);
-        pr.setPredictionParams(marker.getTitle(), 5, 10, true);
+        pr.setPredictionParams(marker.getTitle(), 30, 2, USEDPREDICTION==RAWPREDICTIONTYPE);
         this.predictioThread = new Thread(pr);
         this.predictioThread.start();
         return true;
     }
+
 }
